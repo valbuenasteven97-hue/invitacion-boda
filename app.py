@@ -145,8 +145,10 @@ def archivo_calendario():
 
 @st.cache_data
 def foto_uri(nombre):
-    ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fotos", nombre)
-    if not os.path.exists(ruta):
+    base = os.path.dirname(os.path.abspath(__file__))
+    ruta = next((r for r in (os.path.join(base, "fotos", nombre), os.path.join(base, nombre))
+                 if os.path.exists(r)), None)
+    if not ruta:
         return ""
     with open(ruta, "rb") as f:
         return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
