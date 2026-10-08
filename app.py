@@ -411,7 +411,12 @@ def vista_admin():
         st.info("Escribe la clave para continuar.")
         return
 
-    base = st.text_input("Dirección pública de tu app (para armar los enlaces)", "http://localhost:8501")
+    try:
+        host = st.context.headers.get("Host", "")
+    except Exception:
+        host = ""
+    sugerida = ("http://" if host.startswith(("localhost", "127.")) else "https://") + host if host else "http://localhost:8501"
+    base = st.text_input("Dirección pública de tu app (para armar los enlaces)", sugerida)
 
     st.subheader("Agregar invitados")
     st.caption("Uno por línea. Si quieres, añade el celular al final separado por coma. "
@@ -487,3 +492,6 @@ elif st.query_params.get("admin") == "1":
     vista_admin()
 else:
     st.info("Abre el enlace personal de tu invitación.")
+    if st.button("Soy uno de los novios 💍"):
+        st.query_params["admin"] = "1"
+        st.rerun()
