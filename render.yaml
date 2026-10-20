@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: invitacion-boda
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: 'streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --theme.base light --theme.primaryColor "#6e2433" --theme.backgroundColor "#f6f0e6" --theme.secondaryBackgroundColor "#efe6d6" --theme.textColor "#2b2523"'
+    healthCheckPath: /_stcore/health
+    disk:
+      name: datos
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DB_PATH
+        value: /data/invitacion.db
+      - key: CLAVE_ADMIN
+        sync: false
