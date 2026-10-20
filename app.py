@@ -1,6 +1,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
-import sqlite3, secrets, io, html, os, base64, calendar
+import sqlite3, secrets, io, html, os, base64, calendar, re
 import pandas as pd
 from datetime import datetime, date
 from urllib.parse import quote
@@ -20,14 +20,14 @@ MISA_MAPA = "Iglesia de Tobo"            # texto que busca Google Maps
 FIESTA_HORA = "6:00 p. m."
 FIESTA_LUGAR = "Rancho California (antiguamente Manpower)"
 FIESTA_MAPA = "Rancho California Manpower"
+FIESTA_MAPA_URL = "https://share.google/xR3GdcnH2byiwOrnk"   # enlace exacto de Google Maps (si está, se usa en vez de la búsqueda)
+MISA_MAPA_URL = ""                                           # opcional: enlace exacto de la iglesia
 
-SOBRES = ("Tu presencia es nuestro mejor regalo. Si deseas tener un detalle con nosotros, "
-          "habrá una hermosa lluvia de sobres 💌")
 MENSAJE = "Gracias por ser parte de nuestra historia. ¡Te esperamos!"
 VESTIMENTA = "Libre"   # déjalo vacío ("") para no mostrarlo
 EXTRAS = "🍖 Asado · 🎺 Orquesta · 🎧 DJ"   # lo que habrá en la fiesta; vacío ("") para ocultar
 CONTACTOS = ["3214569187", "3213059268"]   # para dudas
-FRASE = ""   # aquí irá la frase de ustedes (la dejamos para después); vacío para ocultar
+FRASE = "Entre tantos caminos, el amor nos encontró. Hoy empieza nuestro para siempre."   # sale en "Nuestra historia"; vacío ("") para ocultar
 # --- Fotos (carpeta "fotos" junto a este archivo) ---
 FOTO_PORTADA = "foto4.jpg"   # la que se ve grande arriba
 FOTOS = ["foto1.jpg", "foto2.jpg", "foto3.jpg", "foto4.jpg", "foto5.jpg", "foto6.jpg"]
@@ -44,31 +44,16 @@ HORA_MISA_ISO = "16:00:00-05:00"   # para la cuenta regresiva (hora de Colombia)
 
 MUSICA = "musica.mp3"   # archivo en la misma carpeta; vacío ("") para quitar la música
 CLAVE_ADMIN = os.environ.get("CLAVE_ADMIN", "cambia-esta-clave")  # ¡CÁMBIALA!
-DB = "invitacion.db"
+DB = os.environ.get("DB_PATH", "invitacion.db")   # en el hosting se usa un disco persistente
+AUTOSCROLL = True        # la invitación baja sola después de abrir el sobre (el invitado puede pausarla)
+VELOCIDAD_AUTO = 50      # píxeles por segundo: más bajo = más lento
 # ===================================================
 
 ESTILO = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Pinyon+Script&display=swap');
-.stApp{background:#f6f0e6;}
+.stApp{background-color:#f6f0e6;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/><feColorMatrix values='0 0 0 0 .55 0 0 0 0 .42 0 0 0 0 .25 0 0 0 .07 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");}
 .stApp, .stApp p, .stApp label{font-family:'Cormorant Garamond',Georgia,serif;}
-.hero{max-width:600px;margin:14px auto 22px;background:#fffdf9;border:1px solid #c7a76b;
-outline:1px solid #e3d2ac;outline-offset:6px;overflow:hidden;box-shadow:0 22px 50px rgba(70,40,30,.18);
-font-family:'Cormorant Garamond',Georgia,serif;color:#2b2523;animation:entra 1.2s ease both}
-@keyframes entra{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
-.hero .foto{position:relative}
-.hero .foto img{display:block;width:100%;height:420px;object-fit:cover;object-position:50% 28%}
-.hero .foto:after{content:"";position:absolute;left:0;right:0;bottom:0;height:140px;
-background:linear-gradient(to bottom,rgba(255,253,249,0),#fffdf9)}
-.hero .cuerpo{padding:0 24px 36px;text-align:center;margin-top:-30px;position:relative;z-index:2}
-.hero .inv{font-size:20px;font-style:italic;color:#7a6a58}
-.hero .nombre{font-size:46px;font-weight:700;line-height:1.08;color:#3b1520;margin:6px 0 2px;letter-spacing:.3px}
-.hero .orn{color:#b08d57;font-size:15px;letter-spacing:12px;margin:14px 0 6px}
-.hero .novios{font-family:'Pinyon Script',cursive;font-size:60px;line-height:1.15;color:#9c7a3f;margin:0}
-.hero .titulo{font-size:28px;font-weight:600;color:#3b1520;margin:6px 0 0}
-.hero .sub{font-size:19px;font-style:italic;color:#6d5d4c;margin:4px 0 0}
-.hero .fecha{display:inline-block;margin-top:20px;padding:9px 22px;border-top:1px solid #c7a76b;
-border-bottom:1px solid #c7a76b;font-size:22px;font-weight:600;color:#6e2433}
 .sec{max-width:600px;margin:40px auto 14px;text-align:center;font-family:'Cormorant Garamond',Georgia,serif;
 font-size:36px;font-weight:600;color:#3b1520}
 .sec:after{content:"";display:block;width:60px;height:1px;background:#b08d57;margin:10px auto 0}
@@ -95,8 +80,31 @@ outline-offset:5px;font-family:'Cormorant Garamond',Georgia,serif;text-align:cen
 .pase .n{font-size:36px;font-weight:700;color:#3b1520;line-height:1.15}
 .pase .corte{border-top:2px dashed #c9a24b;margin:0 14px}
 .pase .abajo{padding:10px;font-size:17px;color:#6d5d4c}
-@media (prefers-reduced-motion:reduce){.hero{animation:none}}
-@media (max-width:480px){.hero .foto img{height:340px}.hero .nombre{font-size:38px}.hero .novios{font-size:52px}}
+.stApp{color-scheme:light}
+[data-testid="stForm"]{background:#fffdf9;border:1px solid #c7a76b;border-radius:2px;padding:18px 20px}
+[data-testid="stForm"] label,[data-testid="stForm"] p,[data-testid="stForm"] span,[data-testid="stForm"] div,
+[data-testid="stWidgetLabel"] *{color:#2b2523!important}
+[data-testid="stForm"] [data-baseweb="input"],[data-testid="stForm"] [data-baseweb="base-input"],
+[data-testid="stForm"] [data-baseweb="textarea"]{background:#fff!important;border-color:#c7a76b!important}
+[data-testid="stForm"] input,[data-testid="stForm"] textarea{background:#fff!important;color:#2b2523!important;
+-webkit-text-fill-color:#2b2523!important;caret-color:#6e2433}
+[data-testid="stForm"] [data-testid="stNumberInputStepDown"],[data-testid="stForm"] [data-testid="stNumberInputStepUp"]{
+background:#efe6d6!important;color:#2b2523!important}
+[data-testid="stForm"] [data-testid="stNumberInputStepDown"] *,[data-testid="stForm"] [data-testid="stNumberInputStepUp"] *{color:#2b2523!important}
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button{background:#6e2433!important;border:1px solid #c7a76b!important}
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button,
+[data-testid="stForm"] [data-testid="stFormSubmitButton"] button *{color:#fff!important}
+[data-testid="stCaptionContainer"],[data-testid="stCaptionContainer"] *{color:#6d5d4c!important}
+.frase{max-width:520px;margin:6px auto 26px;padding:0 18px;text-align:center;font-family:'Pinyon Script',cursive;
+font-size:34px;line-height:1.3;color:#9c7a3f}
+.frase:before,.frase:after{content:"";display:block;width:70px;height:1px;background:#c7a76b;margin:12px auto}
+.frase .cm{font-family:'Cormorant Garamond',Georgia,serif;font-size:54px;line-height:0;color:#c7a76b;vertical-align:-14px;margin:0 4px}
+@media (max-width:480px){.frase{font-size:28px}}
+@keyframes aparece{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:none}}
+@supports (animation-timeline:view()){
+.sec,.lugar,.nota,.frase,.tl .it,.pase{animation:aparece linear both;animation-timeline:view();animation-range:entry 0% entry 55%}
+}
+@media (prefers-reduced-motion:reduce){.sec,.lugar,.nota,.frase,.tl .it,.pase{animation:none!important}}
 </style>
 """
 
@@ -290,6 +298,328 @@ def itinerario_html():
     return f'<div class="tl">{items}</div>'
 
 
+ALTO_SOBRE = 700   # alto del recuadro del sobre (se ajusta solo al abrir)
+
+SOBRE_HTML = """
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Pinyon+Script&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;background:transparent;font-family:'Cormorant Garamond',Georgia,serif;color:#2b2523;overflow-x:hidden}
+button{font-family:inherit}
+
+/* ---------- ESCENARIO DEL SOBRE ---------- */
+.stage{position:relative;height:__ALTO__px;display:flex;align-items:center;justify-content:center;
+ background:radial-gradient(ellipse 62% 46% at 50% 50%,rgba(255,250,238,.95),rgba(255,250,238,0) 72%);
+ transition:opacity .9s ease,transform .9s ease}
+.stage.fuera{opacity:0;transform:scale(1.12);pointer-events:none}
+.tit{position:absolute;top:46px;left:0;right:0;text-align:center;transition:opacity .6s}
+.tit small{display:block;font-size:20px;font-style:italic;color:#8a6d2b;letter-spacing:.5px}
+.tit b{display:block;font-family:'Pinyon Script',cursive;font-weight:400;font-size:48px;color:#6e2433;line-height:1.2;margin-top:2px}
+.hint{position:absolute;bottom:56px;left:0;right:0;text-align:center;font-size:21px;font-style:italic;color:#7a6a58;
+ animation:pulso 2.2s ease-in-out infinite;transition:opacity .5s}
+@keyframes pulso{0%,100%{opacity:.55;transform:translateY(0)}50%{opacity:1;transform:translateY(-4px)}}
+.sp{position:absolute;width:5px;height:5px;background:#d9b86a;border-radius:50%;opacity:0;animation:brilla 3.4s ease-in-out infinite;
+ box-shadow:0 0 6px 2px rgba(217,184,106,.55)}
+@keyframes brilla{0%,100%{opacity:0;transform:scale(.4) translateY(0)}50%{opacity:.95;transform:scale(1) translateY(-14px)}}
+
+.escena{transform-origin:50% 50%}
+.bob{animation:bob 4.2s ease-in-out infinite}
+@keyframes bob{0%,100%{transform:translateY(0) rotate(-.6deg)}50%{transform:translateY(-9px) rotate(.6deg)}}
+
+.env{position:relative;width:340px;height:230px;perspective:1100px;cursor:pointer}
+.back{position:absolute;inset:0;z-index:0;border-radius:3px;background:linear-gradient(180deg,#c9ae84,#d6bf99);
+ box-shadow:0 20px 40px rgba(70,40,30,.25)}
+
+/* solapa (se abre en 3D) */
+.flap{position:absolute;left:0;top:0;width:100%;height:55%;z-index:4;transform-origin:50% 0;transform-style:preserve-3d;
+ transition:transform .95s cubic-bezier(.5,0,.25,1)}
+.flap .o,.flap .i{position:absolute;inset:0;clip-path:polygon(0 0,100% 0,50% 100%);backface-visibility:hidden;-webkit-backface-visibility:hidden}
+.flap .o{background:linear-gradient(180deg,#dbc59c,#cdb28a)}
+.flap .i{transform:rotateX(180deg);
+ background:linear-gradient(135deg,rgba(176,141,87,.25) 25%,transparent 25%) -8px 0/16px 16px,
+            linear-gradient(225deg,rgba(176,141,87,.25) 25%,transparent 25%) -8px 0/16px 16px,#efe3cc}
+.env.abre .flap{transform:rotateX(180deg)}
+.env.atras .flap{z-index:1}
+
+/* tarjetita que sale del sobre */
+.mini{position:absolute;left:20px;top:14px;width:300px;height:206px;z-index:2;background:#fffaf0;border:1px solid #c7a76b;
+ outline:1px solid #e3d2ac;outline-offset:-6px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;
+ transition:transform 1.1s cubic-bezier(.22,.9,.3,1),box-shadow 1s}
+.mini .m1{font-size:16px;font-style:italic;color:#8a6d2b}
+.mini .m2{font-family:'Pinyon Script',cursive;font-size:42px;color:#9c7a3f;line-height:1.15}
+.mini .m3{font-size:14px;letter-spacing:7px;color:#b08d57;margin-top:2px}
+.env.sale .mini{transform:translateY(-150px)}
+.env.frente .mini{z-index:5;transform:translateY(-205px) scale(1.1);box-shadow:0 22px 44px rgba(70,40,30,.28)}
+
+/* bolsillo (frente del sobre) */
+.bolsillo{position:absolute;inset:0;z-index:3;filter:drop-shadow(0 -2px 3px rgba(70,40,30,.2))}
+.bolsillo i{position:absolute;inset:0;display:block}
+.bolsillo .l{clip-path:polygon(0 0,0 100%,50% 55%);background:linear-gradient(100deg,#e6d5b6,#d8c39c)}
+.bolsillo .r{clip-path:polygon(100% 0,100% 100%,50% 55%);background:linear-gradient(260deg,#e6d5b6,#d8c39c)}
+.bolsillo .b{clip-path:polygon(0 100%,50% 55%,100% 100%);background:linear-gradient(180deg,#ecdcbd,#e1cda8)}
+.para{position:absolute;left:0;right:0;bottom:20px;z-index:4;text-align:center;line-height:1.1;pointer-events:none}
+.para small{display:block;font-size:13px;letter-spacing:4px;text-transform:uppercase;color:#8a6d2b}
+.para b{display:block;font-family:'Pinyon Script',cursive;font-weight:400;font-size:32px;color:#6e2433;white-space:nowrap}
+
+/* sello de cera */
+.seal{position:absolute;left:50%;top:55%;width:64px;height:64px;margin:-32px 0 0 -32px;z-index:6;border:none;cursor:pointer;
+ border-radius:50% 46% 52% 48% / 48% 52% 46% 50%;
+ background:radial-gradient(circle at 35% 30%,#a8405a,#6e2433 60%,#4a1220);
+ box-shadow:0 5px 12px rgba(40,10,20,.5),inset 0 0 0 3px rgba(227,210,172,.35),inset 0 0 0 5px rgba(0,0,0,.12);
+ color:#f3dfae;font-size:19px;font-style:italic;font-weight:700;letter-spacing:.5px;
+ transition:transform .35s,opacity .35s;animation:latido 1.9s ease-in-out infinite}
+.seal:before{content:"";position:absolute;inset:-7px;border-radius:50%;border:1px solid rgba(110,36,51,.45);animation:onda 1.9s ease-out infinite}
+@keyframes latido{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+@keyframes onda{0%{transform:scale(.9);opacity:.8}100%{transform:scale(1.55);opacity:0}}
+.seal:focus-visible{outline:2px solid #6e2433;outline-offset:5px}
+.env.rompe .seal{animation:none;transform:scale(1.3) rotate(9deg);opacity:0;pointer-events:none}
+.env.rompe .seal:before{display:none}
+.ch{position:absolute;left:50%;top:55%;width:6px;height:6px;margin:-3px;border-radius:50%;background:#e0bf72;z-index:7;
+ pointer-events:none;box-shadow:0 0 6px 2px rgba(224,191,114,.7)}
+
+/* ---------- LA INVITACIÓN ---------- */
+.inv{display:none;position:relative;padding:16px 14px 28px}
+.inv.on{display:block}
+.tarjeta{position:relative;max-width:560px;margin:0 auto;background:#fffdf9;border:1px solid #c7a76b;outline:1px solid #e3d2ac;
+ outline-offset:6px;overflow:hidden;box-shadow:0 22px 50px rgba(70,40,30,.2);
+ transform:translateY(70px) scale(.9);opacity:0;transition:transform 1.1s cubic-bezier(.2,.9,.25,1),opacity .9s}
+.inv.on .tarjeta{transform:none;opacity:1}
+.tarjeta.listo{transition:transform .2s ease-out}
+.tarjeta:after{content:"";position:absolute;inset:0;pointer-events:none;z-index:5;
+ background:linear-gradient(115deg,transparent 40%,rgba(255,243,210,.55) 50%,transparent 60%);
+ transform:translateX(-130%);animation:brillo 5s ease-in-out 2.2s infinite}
+@keyframes brillo{0%{transform:translateX(-130%)}35%,100%{transform:translateX(130%)}}
+.esq{position:absolute;width:92px;height:92px;pointer-events:none;z-index:3;opacity:.95}
+.esq.bl{bottom:6px;left:6px}
+.esq.br{bottom:6px;right:6px;transform:scaleX(-1)}
+.esq.tl{top:6px;left:6px;transform:scaleY(-1)}
+.esq.tr{top:6px;right:6px;transform:scale(-1,-1)}
+.foto{position:relative;height:250px;overflow:hidden}
+.foto img{display:block;width:100%;height:100%;object-fit:cover;object-position:50% 28%;animation:zoom 16s ease-in-out infinite alternate}
+@keyframes zoom{from{transform:scale(1)}to{transform:scale(1.08)}}
+.foto:after{content:"";position:absolute;left:0;right:0;bottom:0;height:110px;background:linear-gradient(to bottom,rgba(255,253,249,0),#fffdf9)}
+.cuerpo{position:relative;z-index:2;padding:30px 22px 34px;text-align:center}
+.foto + .cuerpo{margin-top:-26px;padding-top:0}
+.a{opacity:0;transform:translateY(16px)}
+.inv.on .a{animation:sube .9s ease forwards;animation-delay:calc(var(--i) * .18s + .8s)}
+@keyframes sube{to{opacity:1;transform:none}}
+.t-inv{font-size:20px;font-style:italic;color:#7a6a58}
+.nombre{font-size:46px;font-weight:700;line-height:1.08;color:#3b1520;margin:6px 0 2px;letter-spacing:.3px}
+.orn{color:#b08d57;font-size:15px;letter-spacing:12px;margin:12px 0 4px}
+.novios{font-family:'Pinyon Script',cursive;font-size:60px;line-height:1.15;color:#9c7a3f;margin:0}
+.titulo{font-size:28px;font-weight:600;color:#3b1520;margin:4px 0 0}
+.sub{font-size:19px;font-style:italic;color:#6d5d4c;margin:4px 0 0}
+.fecha{display:inline-block;margin-top:18px;padding:9px 22px;border-top:1px solid #c7a76b;border-bottom:1px solid #c7a76b;
+ font-size:22px;font-weight:600;color:#6e2433}
+.desliza{margin-top:18px;font-size:17px;font-style:italic;color:#8a6d2b}
+.desliza span{display:block;font-size:22px;animation:rebota 1.6s ease-in-out infinite}
+@keyframes rebota{0%,100%{transform:translateY(0)}50%{transform:translateY(6px)}}
+.petalos{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:6}
+.petalos i{position:absolute;top:-24px;border-radius:70% 0 70% 0;opacity:0;animation:caer linear infinite}
+@keyframes caer{0%{transform:translate(0,-24px) rotate(0);opacity:0}10%{opacity:.85}100%{transform:translate(var(--dx),var(--h)) rotate(560deg);opacity:0}}
+
+@media (max-width:480px){.foto{height:210px}.nombre{font-size:38px}.novios{font-size:52px}.tit b{font-size:40px}}
+@media (prefers-reduced-motion:reduce){
+ *{animation:none!important;transition:none!important}
+ .a,.tarjeta{opacity:1!important;transform:none!important}
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="rama" viewBox="0 0 100 100"><g fill="none" stroke="#b08d57" stroke-width="1.3" stroke-linecap="round">
+<path d="M3 97 C 20 64, 46 36, 94 6"/>
+<g fill="#e8d9b5" stroke-width=".9">
+<ellipse cx="16" cy="74" rx="10" ry="4.2" transform="rotate(-70 16 74)"/>
+<ellipse cx="25" cy="62" rx="10" ry="4.2" transform="rotate(-8 25 62)"/>
+<ellipse cx="38" cy="50" rx="10" ry="4.2" transform="rotate(-80 38 50)"/>
+<ellipse cx="49" cy="40" rx="10" ry="4.2" transform="rotate(-5 49 40)"/>
+<ellipse cx="64" cy="29" rx="9" ry="3.8" transform="rotate(-75 64 29)"/>
+<ellipse cx="76" cy="19" rx="9" ry="3.8" transform="rotate(-8 76 19)"/>
+</g><circle cx="90" cy="9" r="2.2" fill="#c9a24b"/></g></symbol>
+</defs></svg>
+
+<div class="stage" id="stage">
+  <div class="tit" id="tit"><small>Tienes una invitación</small><b>muy especial</b></div>
+  <div class="escena" id="escena"><div class="bob">
+    <div class="env" id="env">
+      <div class="back"></div>
+      <div class="flap"><div class="o"></div><div class="i"></div></div>
+      <div class="mini"><div class="m1">Estás invitado a la boda de</div><div class="m2">__NOVIOS__</div><div class="m3">✦ ✦ ✦</div></div>
+      <div class="bolsillo"><i class="l"></i><i class="r"></i><i class="b"></i></div>
+      <div class="para"><small>Para</small><b id="pn">__NOMBRE__</b></div>
+      <button class="seal" id="seal" aria-label="Abrir la invitación">__INI__</button>
+    </div>
+  </div></div>
+  <div class="hint" id="hint">Toca el sello para abrir</div>
+</div>
+
+<div class="inv" id="inv">
+  <div class="tarjeta" id="tarj">
+    __ESQ_TOP__
+    <svg class="esq bl" viewBox="0 0 100 100"><use href="#rama"/></svg>
+    <svg class="esq br" viewBox="0 0 100 100"><use href="#rama"/></svg>
+    __FOTO__
+    <div class="cuerpo">
+      <div class="a t-inv" style="--i:0">Con mucho cariño invitamos a</div>
+      <div class="a nombre" style="--i:1">__NOMBRE__</div>
+      <div class="a orn" style="--i:2">✦ ✦ ✦</div>
+      <div class="a novios" style="--i:3">__NOVIOS__</div>
+      <div class="a titulo" style="--i:4">__TITULO__</div>
+      <div class="a sub" style="--i:5">__SUBTITULO__</div>
+      <div class="a fecha" style="--i:6">__FECHA__</div>
+      <div class="a desliza" style="--i:7">Desliza para ver todos los detalles<span>⌄</span></div>
+    </div>
+  </div>
+  <div class="petalos" id="petalos"></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const env=$('env'),stage=$('stage'),inv=$('inv'),tarj=$('tarj');
+const reducir=matchMedia('(prefers-reduced-motion:reduce)').matches;
+let abierto=false;
+const AUTO=__AUTO__,VEL=__VEL__;
+
+function escala(){const k=Math.min(1,(innerWidth-24)/340);$('escena').style.transform='scale('+k+')'}
+escala();addEventListener('resize',escala);
+
+function fit(){try{window.frameElement.style.height=(Math.ceil(inv.getBoundingClientRect().height)+8)+'px'}catch(e){}}
+new ResizeObserver(()=>{if(abierto)fit()}).observe(inv);
+
+/* ajusta el tamaño del nombre en el sobre si es muy largo */
+(function(){const n=$('pn'),L=n.textContent.length;if(L>24)n.style.fontSize='19px';else if(L>16)n.style.fontSize='24px'})();
+
+/* destellos dorados alrededor del sobre */
+for(let i=0;i<16;i++){const s=document.createElement('b');s.className='sp';
+  s.style.cssText='left:'+(8+Math.random()*84)+'%;top:'+(12+Math.random()*76)+'%;animation-delay:'+(-Math.random()*3.4)+'s;animation-duration:'+(2.6+Math.random()*2.4)+'s';
+  stage.appendChild(s)}
+
+function chispas(){
+  for(let i=0;i<18;i++){
+    const p=document.createElement('i');p.className='ch';env.appendChild(p);
+    const a=Math.random()*Math.PI*2,d=60+Math.random()*90;
+    p.animate([{transform:'translate(0,0) scale(1)',opacity:1},
+               {transform:'translate('+Math.cos(a)*d+'px,'+(Math.sin(a)*d-20)+'px) scale(.2)',opacity:0}],
+              {duration:900+Math.random()*400,easing:'cubic-bezier(.15,.8,.3,1)'}).onfinish=()=>p.remove();
+  }
+}
+
+function petalos(){
+  const c=$('petalos'),cols=['#e8d3b0','#f0e0c4','#d9b48a','#c9a24b','#ead0c6'],h=inv.getBoundingClientRect().height+30;
+  for(let i=0;i<18;i++){
+    const p=document.createElement('i'),s=8+Math.random()*10;
+    p.style.cssText='left:'+(Math.random()*100)+'%;width:'+s+'px;height:'+(s*1.3)+'px;background:'+cols[i%cols.length]+
+      ';animation-duration:'+(8+Math.random()*7)+'s;animation-delay:'+(Math.random()*6)+'s;--dx:'+(Math.random()*90-45)+'px;--h:'+h+'px';
+    c.appendChild(p);
+  }
+}
+
+function autoScroll(){
+  let P,D;try{P=window.parent;D=P.document;D.body}catch(e){return}
+  if(reducir)return;
+  try{P.__autoOff&&P.__autoOff()}catch(e){}
+  let el=null;
+  for(const q of ['[data-testid="stMain"]','section.main','[data-testid="stAppViewContainer"]']){
+    const x=D.querySelector(q);if(x&&x.scrollHeight>x.clientHeight+50){el=x;break}}
+  if(!el)el=D.scrollingElement||D.documentElement;
+  let pos=el.scrollTop,ult=pos,t0=null,raf=0,corre=false,estado='';
+  const btn=D.createElement('button');
+  btn.setAttribute('aria-label','Pausar o seguir el recorrido automático');
+  btn.style.cssText='position:fixed;right:16px;bottom:16px;z-index:999999;padding:9px 16px;border-radius:999px;border:1px solid #c7a76b;background:rgba(255,253,249,.95);color:#6e2433;font:600 17px "Cormorant Garamond",Georgia,serif;cursor:pointer;box-shadow:0 6px 18px rgba(70,40,30,.25)';
+  D.body.appendChild(btn);
+  const pinta=()=>{btn.textContent=corre?'⏸ Pausar':(estado==='fin'?'↺ Ver de nuevo':'▶ Seguir')};
+  const ir=y=>{try{el.scrollTo({top:y,behavior:'instant'})}catch(e){el.scrollTop=y}};
+  function paso(ts){
+    if(!corre)return;
+    if(t0===null)t0=ts;
+    const dt=Math.min(ts-t0,100);t0=ts;
+    if(Math.abs(el.scrollTop-ult)>4){parar();return}      /* el invitado movió la página */
+    const max=el.scrollHeight-el.clientHeight;
+    pos+=VEL*dt/1000;
+    if(pos>=max-1){ir(max);estado='fin';parar();return}
+    ir(pos);ult=el.scrollTop;
+    raf=P.requestAnimationFrame(paso);
+  }
+  function seguir(){if(corre)return;estado='';pos=el.scrollTop;ult=pos;t0=null;corre=true;pinta();raf=P.requestAnimationFrame(paso)}
+  function parar(){corre=false;P.cancelAnimationFrame(raf);pinta()}
+  const manual=e=>{if(e.target===btn)return;if(corre)parar()};
+  const evs=['wheel','touchstart','mousedown','keydown'];
+  evs.forEach(n=>D.addEventListener(n,manual,{passive:true,capture:true}));
+  btn.onclick=()=>{
+    if(corre)parar();
+    else if(estado==='fin'){estado='';ir(0);setTimeout(seguir,700)}
+    else seguir();
+  };
+  const off=()=>{corre=false;try{P.cancelAnimationFrame(raf)}catch(e){}
+    evs.forEach(n=>D.removeEventListener(n,manual,{capture:true}));btn.remove()};
+  P.__autoOff=off;
+  addEventListener('pagehide',off);
+  seguir();
+}
+
+function mostrar(){
+  stage.classList.add('fuera');
+  stage.style.cssText+=';position:absolute;left:0;right:0;top:0';
+  inv.classList.add('on');
+  fit();petalos();
+  setTimeout(()=>{stage.style.display='none';fit()},950);
+  setTimeout(()=>tarj.classList.add('listo'),1500);
+  if(AUTO)setTimeout(autoScroll,4500);
+}
+
+function abrir(){
+  if(abierto)return;abierto=true;
+  try{const a=window.parent.document.querySelector('audio');if(a){a.volume=.7;const r=a.play();if(r&&r.catch)r.catch(()=>{})}}catch(e){}
+  if(reducir){mostrar();return}
+  chispas();
+  env.classList.add('rompe');
+  $('tit').style.opacity=0;$('hint').style.opacity=0;
+  setTimeout(()=>env.classList.add('abre'),380);
+  setTimeout(()=>env.classList.add('atras'),850);
+  setTimeout(()=>env.classList.add('sale'),1450);
+  setTimeout(()=>env.classList.add('frente'),2650);
+  setTimeout(mostrar,3500);
+}
+$('seal').addEventListener('click',e=>{e.stopPropagation();abrir()});
+env.addEventListener('click',abrir);
+
+/* pequeña inclinación 3D de la tarjeta con el mouse */
+tarj.addEventListener('pointermove',e=>{
+  if(!tarj.classList.contains('listo')||e.pointerType==='touch')return;
+  const r=tarj.getBoundingClientRect(),x=(e.clientX-r.left)/r.width-.5,y=(e.clientY-r.top)/r.height-.5;
+  tarj.style.transform='perspective(1000px) rotateY('+(x*6)+'deg) rotateX('+(-y*5)+'deg)';
+});
+tarj.addEventListener('pointerleave',()=>{tarj.style.transform=''});
+</script>
+"""
+
+
+def iniciales_novios():
+    partes = [p.strip() for p in NOVIOS.split("&") if p.strip()]
+    return " & ".join(p[0].upper() for p in partes) if partes else NOVIOS[:1]
+
+
+def bloque_sobre(nombre):
+    """Sobre beige que se abre y deja ver la invitación."""
+    portada = foto_uri(FOTO_PORTADA)
+    foto = (f'<div class="foto"><img src="{portada}" alt="{html.escape(NOVIOS)}"></div>' if portada else "")
+    esq_top = "" if portada else ('<svg class="esq tl" viewBox="0 0 100 100"><use href="#rama"/></svg>'
+                                  '<svg class="esq tr" viewBox="0 0 100 100"><use href="#rama"/></svg>')
+    page = (SOBRE_HTML
+            .replace("__ALTO__", str(ALTO_SOBRE))
+            .replace("__AUTO__", "true" if AUTOSCROLL else "false")
+            .replace("__VEL__", str(float(VELOCIDAD_AUTO)))
+            .replace("__FOTO__", foto)
+            .replace("__ESQ_TOP__", esq_top)
+            .replace("__INI__", html.escape(iniciales_novios()))
+            .replace("__NOVIOS__", html.escape(NOVIOS))
+            .replace("__NOMBRE__", html.escape(nombre))
+            .replace("__TITULO__", html.escape(TITULO_EVENTO))
+            .replace("__SUBTITULO__", html.escape(SUBTITULO))
+            .replace("__FECHA__", html.escape(FECHA_TEXTO)))
+    components.html(page, height=ALTO_SOBRE)
+
+
 def vista_invitado(codigo):
     with con() as c:
         g = c.execute("SELECT * FROM invitados WHERE codigo=?", (codigo,)).fetchone()
@@ -297,24 +627,10 @@ def vista_invitado(codigo):
         st.error("Este enlace no es válido. Pídele uno nuevo a quien te invitó.")
         return
 
-    portada = foto_uri(FOTO_PORTADA)
-    img = f'<div class="foto"><img src="{portada}" alt="{html.escape(NOVIOS)}"></div>' if portada else ""
-    st.markdown(
-        '<div class="hero">' + img +
-        '<div class="cuerpo">'
-        '<div class="inv">Con mucho cariño invitamos a</div>'
-        f'<div class="nombre">{html.escape(g["nombre"])}</div>'
-        '<div class="orn">✦ ✦ ✦</div>'
-        f'<p class="novios">{html.escape(NOVIOS)}</p>'
-        f'<p class="titulo">{html.escape(TITULO_EVENTO)}</p>'
-        f'<p class="sub">{html.escape(SUBTITULO)}</p>'
-        f'<div class="fecha">{html.escape(FECHA_TEXTO)}</div>'
-        '</div></div>',
-        unsafe_allow_html=True,
-    )
+    bloque_sobre(g["nombre"])
 
     if MUSICA and os.path.exists(MUSICA):
-        st.caption("🎵 Dale play para escuchar la música de nuestra boda")
+        st.caption("🎵 La música suena al abrir el sobre; si no se oye, dale play aquí")
         st.audio(MUSICA)
 
     st.markdown('<div class="sec">Falta muy poco</div>', unsafe_allow_html=True)
@@ -324,6 +640,9 @@ def vista_invitado(codigo):
     st.markdown(itinerario_html(), unsafe_allow_html=True)
 
     st.markdown('<div class="sec">Nuestra historia</div>', unsafe_allow_html=True)
+    if FRASE:
+        st.markdown(f'<div class="frase"><span class="cm">“</span>{html.escape(FRASE)}<span class="cm">”</span></div>',
+                    unsafe_allow_html=True)
     bloque_galeria()
 
     st.markdown('<div class="sec">Dónde nos vemos</div>', unsafe_allow_html=True)
@@ -336,21 +655,20 @@ def vista_invitado(codigo):
         unsafe_allow_html=True,
     )
     b1, b2, b3 = st.columns(3)
-    b1.link_button("⛪ Cómo llegar a la misa", maps(MISA_MAPA), use_container_width=True)
-    b2.link_button("🥂 Cómo llegar a la fiesta", maps(FIESTA_MAPA), use_container_width=True)
+    b1.link_button("⛪ Cómo llegar a la misa", (MISA_MAPA_URL or maps(MISA_MAPA)), use_container_width=True)
+    b2.link_button("🥂 Cómo llegar a la fiesta", (FIESTA_MAPA_URL or maps(FIESTA_MAPA)), use_container_width=True)
     b3.download_button("📆 Guardar en mi calendario", archivo_calendario(), "boda.ics",
                        "text/calendar", use_container_width=True)
 
     vest = (f'<div class="nota" style="padding:10px">👗 Vestimenta: <b>{html.escape(VESTIMENTA)}</b></div>'
             if VESTIMENTA else "")
-    frase = f'<div class="nota msg">“{html.escape(FRASE)}”</div>' if FRASE else ""
     contacto = ""
     if CONTACTOS:
         links = " · ".join(f'<a href="https://wa.me/57{n}" target="_blank" style="color:#6e2433">{n}</a>'
                            for n in CONTACTOS)
         contacto = f'<div class="nota" style="padding:10px;font-size:18px">📞 ¿Dudas? Escríbenos: {links}</div>'
     st.markdown(
-        f'{vest}<div class="nota">{html.escape(SOBRES)}</div>{frase}'
+        f'{vest}'
         f'<div class="nota msg">{html.escape(MENSAJE)}</div>{contacto}',
         unsafe_allow_html=True,
     )
@@ -405,6 +723,20 @@ def telefono_wa(t):
     return t
 
 
+def enlace_publico():
+    """Lee el enlace público que crea iniciar.bat (cloudflared) en tunel.log. Devuelve (enlace, existe_log)."""
+    ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tunel.log")
+    if not os.path.exists(ruta):
+        return None, False
+    try:
+        with open(ruta, encoding="utf-8", errors="ignore") as f:
+            txt = f.read()
+    except OSError:
+        return None, True
+    urls = [u for u in re.findall(r"https://[a-z0-9-]+\.trycloudflare\.com", txt) if not u.startswith("https://api.")]
+    return (urls[-1] if urls else None), True
+
+
 def vista_admin():
     st.title("Panel de los novios 💍")
     if st.text_input("Clave", type="password") != CLAVE_ADMIN:
@@ -416,6 +748,13 @@ def vista_admin():
     except Exception:
         host = ""
     sugerida = ("http://" if host.startswith(("localhost", "127.")) else "https://") + host if host else "http://localhost:8501"
+    publico, hay_log = enlace_publico()
+    if publico:
+        sugerida = publico
+        st.success(f"🌐 Enlace público activo: {publico}  — los enlaces de abajo ya sirven para enviar a tus invitados.")
+    elif hay_log:
+        st.warning("Todavía no aparece el enlace público (tarda unos segundos en crearse).")
+        st.button("🔄 Buscar enlace público")
     base = st.text_input("Dirección pública de tu app (para armar los enlaces)", sugerida)
 
     st.subheader("Agregar invitados")
